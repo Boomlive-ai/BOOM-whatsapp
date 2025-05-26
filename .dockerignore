@@ -1,0 +1,26 @@
+# .dockerignore
+
+# Ignore Git data
+.git
+.gitignore
+
+# Ignore Python artifacts and caches
+__pycache__/
+*.py[cod]
+*.egg-info
+*.egg
+*.whl
+
+# Ignore dotenv files (we’ll inject via Coolify secrets)
+.env
+
+# IDE configs
+.vscode/
+.idea/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
