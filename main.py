@@ -326,6 +326,7 @@ async def webhook_handler(req: WebhookRequest):
                 elif mtype in ["image","audio","video"]:
                     media = msg[mtype]
                     content = await fetch_media_url(media.get("id"))
+                    print(f"Media content fetched: {len(content)} bytes", content)
                     if content:
                         text = await extract_text_from_media(content)
                         asyncio.create_task(process_message(sender, text))
