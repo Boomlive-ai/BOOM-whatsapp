@@ -365,7 +365,7 @@ async def process_message(to: str, text: str):
     try:
         logger.info(f"LLM call for {to}: {text[:30]}...")
         async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.get(LLM_API_URL, params={"question": text, "thread_id": f"{date.today().isoformat()}_{to}"})
+            r = await client.get(LLM_API_URL, params={"question": text, "thread_id": f"{date.today().isoformat()}_{to}", "using_Whatsapp": True})
         if r.status_code == 200:
             reply = r.json().get("response", "No response")
         else:
