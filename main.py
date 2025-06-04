@@ -325,11 +325,14 @@ async def webhook_handler(req: WebhookRequest):
                     asyncio.create_task(process_message(sender, text))
                 elif mtype in ["image","audio","video"]:
                     media = msg[mtype]
-                    content = await fetch_media_url(media.get("id"))
-                    # print(f"Media content fetched: {len(content)} bytes", content)
-                    if content:
-                        text = await extract_text_from_media(content)
+                    text = await fetch_and_extract_media_text(media.get("id"))
+                    if text:
                         asyncio.create_task(process_message(sender, text))
+                    # content = await fetch_media_url(media.get("id"))
+                    # print(f"Media content fetched: {len(content)} bytes", content)
+                    # if content:
+                    #     text = await extract_text_from_media(content)
+                    #     asyncio.create_task(process_message(sender, text))
 
     return {"status": "success"}
 
@@ -376,14 +379,53 @@ async def process_message(to: str, text: str):
         except Exception as send_exc:
             logger.error(f"Failed to send error message: {send_exc}")
 
-async def fetch_media_url(media_id: str) -> bytes:
+# async def fetch_media_url(media_id: str) -> bytes:
+#     if not await ensure_valid_token():
+#         logger.error("Cannot fetch media - invalid token")
+#         return b""
+        
+#     url = f"{WHATSAPP_API_URL}/{media_id}"
+#     print(f"Fetching media from {url}")
+#     headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
+#     async with httpx.AsyncClient() as client:
+#         r = await client.get(url, headers=headers)
+#         if r.status_code == 401:
+#             logger.warning("Media fetch failed with 401, attempting token refresh...")
+#             if await refresh_access_token():
+#                 headers["Authorization"] = f"Bearer {ACCESS_TOKEN}"
+#                 r = await client.get(url, headers=headers)
+                
+#         if r.status_code != 200:
+#             logger.error(f"Media fetch failed: {r.status_code}")
+#             return b""
+            
+#         media_url = r.json().get("url")
+#         r2 = await client.get(media_url, headers=headers)
+#         return r2.content if r2.status_code == 200 else b""
+
+# async def extract_text_from_media(content: bytes) -> str:
+#     tmp = f"temp_{secrets.token_hex(8)}"
+#     async with aiofiles.open(tmp, "wb") as f:
+#         await f.write(content)
+#     async with aiofiles.open(tmp, "rb") as f:
+#         data = await f.read()
+#     url = "https://k8ccccwccggk4gc4c0o4ggkg.vps.boomlive.in/media/process_input"
+#     async with httpx.AsyncClient() as client:
+#         r = await client.post(url, files={"file": (tmp, data)})
+#     os.remove(tmp)
+#     return r.json().get("extracted_text", "") if r.status_code == 200 else ""
+
+
+async def fetch_and_extract_media_text(media_id: str) -> str:
+    """Fetch media and extract text using the new unified API"""
     if not await ensure_valid_token():
         logger.error("Cannot fetch media - invalid token")
-        return b""
+        return ""
         
+    # First get the media URL from WhatsApp API
     url = f"{WHATSAPP_API_URL}/{media_id}"
-    print(f"Fetching media from {url}")
     headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
+    
     async with httpx.AsyncClient() as client:
         r = await client.get(url, headers=headers)
         if r.status_code == 401:
@@ -394,23 +436,45 @@ async def fetch_media_url(media_id: str) -> bytes:
                 
         if r.status_code != 200:
             logger.error(f"Media fetch failed: {r.status_code}")
-            return b""
+            return ""
             
         media_url = r.json().get("url")
-        r2 = await client.get(media_url, headers=headers)
-        return r2.content if r2.status_code == 200 else b""
+        if not media_url:
+            logger.error("No media URL found in response")
+            return ""
+        
+        # Now use the new media processing API
+        media_process_url = "https://k8ccccwccggk4gc4c0o4ggkg.vps.boomlive.in/media/whatsapp/process"
+        params = {
+            "url": media_url,
+            "token": ACCESS_TOKEN
+        }
+        
+        logger.info(f"Processing media with URL: {media_url}")
+        
+        r2 = await client.get(media_process_url, params=params)
+        
+        if r2.status_code != 200:
+            logger.error(f"Media processing failed: {r2.status_code} - {r2.text}")
+            return ""
+            
+        try:
+            response_data = r2.json()
+            if response_data.get("success") and response_data.get("data", {}).get("success"):
+                extracted_text = response_data["data"]["result"]["text"]
+                media_type = response_data["data"]["result"]["type"]
+                file_size = response_data["data"]["result"]["file_size"]
+                
+                logger.info(f"Successfully extracted text from {media_type} ({file_size} bytes): {extracted_text[:100]}...")
+                return extracted_text
+            else:
+                logger.error(f"Media processing API returned error: {response_data}")
+                return ""
+                
+        except (KeyError, TypeError) as e:
+            logger.error(f"Error parsing media processing response: {e}")
+            return ""
 
-async def extract_text_from_media(content: bytes) -> str:
-    tmp = f"temp_{secrets.token_hex(8)}"
-    async with aiofiles.open(tmp, "wb") as f:
-        await f.write(content)
-    async with aiofiles.open(tmp, "rb") as f:
-        data = await f.read()
-    url = "https://k8ccccwccggk4gc4c0o4ggkg.vps.boomlive.in/media/process_input"
-    async with httpx.AsyncClient() as client:
-        r = await client.post(url, files={"file": (tmp, data)})
-    os.remove(tmp)
-    return r.json().get("extracted_text", "") if r.status_code == 200 else ""
 
 async def send_whatsapp_message(to: str, body: str):
     if not await ensure_valid_token():
