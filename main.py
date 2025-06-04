@@ -314,7 +314,12 @@ async def webhook_handler(req: WebhookRequest):
                 asyncio.create_task(send_read_receipt(msg_id))
 
                 # dispatch asynchronously
+
                 mtype = msg.get("type")
+                print("****************************************************************")
+                print(f"Received message from {sender}: {msg_id} type={mtype}")
+                print("****************************************************************")
+
                 if mtype == "text":
                     text = msg["text"]["body"]
                     asyncio.create_task(process_message(sender, text))
