@@ -364,7 +364,7 @@ async def send_read_receipt(message_id: str):
 async def process_message(to: str, text: str):
     try:
         logger.info(f"LLM call for {to}: {text[:30]}...")
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=100) as client:
             r = await client.get(LLM_API_URL, params={"question": text, "thread_id": f"{date.today().isoformat()}_{to}", "using_Whatsapp": True})
         if r.status_code == 200:
             reply = r.json().get("response", "No response")
@@ -490,7 +490,7 @@ async def send_whatsapp_message(to: str, body: str):
         "type": "text",
         "text": {"body": body, "preview_url": False}
     }
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=100) as client:
         r = await client.post(url, headers=headers, json=payload)
         if r.status_code == 401:
             logger.warning("Message send failed with 401, attempting token refresh...")
