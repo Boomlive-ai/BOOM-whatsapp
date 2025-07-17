@@ -365,8 +365,10 @@ async def process_message(to: str, text: str):
     try:
         logger.info(f"LLM call for {to}: {text[:30]}...")
         from datetime import datetime
-        thread_id = f"{datetime.now().isoformat()}_{to}"
+        import uuid
 
+        thread_id = f"{datetime.now().isoformat()}_{to}_{uuid.uuid4().hex}"
+        print(f"Thread ID: {thread_id}")
         async with httpx.AsyncClient(timeout=100) as client:
             r = await client.get(LLM_API_URL, params={"question": text, "thread_id": thread_id, "using_Whatsapp": True})
         if r.status_code == 200:
