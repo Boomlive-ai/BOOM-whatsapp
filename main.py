@@ -364,8 +364,11 @@ async def send_read_receipt(message_id: str):
 async def process_message(to: str, text: str):
     try:
         logger.info(f"LLM call for {to}: {text[:30]}...")
+        from datetime import datetime
+        thread_id = f"{datetime.now().isoformat()}_{to}"
+
         async with httpx.AsyncClient(timeout=100) as client:
-            r = await client.get(LLM_API_URL, params={"question": text, "thread_id": f"{date.today().isoformat()}_{to}", "using_Whatsapp": True})
+            r = await client.get(LLM_API_URL, params={"question": text, "thread_id": thread_id, "using_Whatsapp": True})
         if r.status_code == 200:
             reply = r.json().get("response", "No response")
         else:
