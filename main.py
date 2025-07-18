@@ -13,6 +13,7 @@ import time
 from datetime import datetime, date, timedelta
 import asyncio
 import json
+from twitter_service import TwitterService
 
 # Load env
 load_dotenv()
@@ -26,7 +27,11 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", secrets.token_urlsafe(32))
 LLM_API_URL = os.getenv("LLM_API_URL", "https://a8c4cosco0wc0gg8s40w8kco.vps.boomlive.in/query")
 WHATSAPP_API_URL = "https://graph.facebook.com/v22.0"
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
-
+# Initialize the Twitter service (add this after your other initializations)
+twitter_service = TwitterService(
+    llm_api_url=LLM_API_URL,
+    twitter_bearer_token=os.getenv("TWITTER_BEARER_TOKEN")  # Add this to your .env file
+)
 # App credentials (required for token refresh)
 WHATSAPP_APP_ID = os.getenv("WHATSAPP_APP_ID")
 WHATSAPP_APP_SECRET = os.getenv("WHATSAPP_APP_SECRET")
@@ -361,29 +366,48 @@ async def send_read_receipt(message_id: str):
             text = resp.text
             logger.error(f"Read receipt failed: {resp.status_code} {text}")
 
-async def process_message(to: str, text: str):
-    try:
-        logger.info(f"LLM call for {to}: {text[:30]}...")
-        from datetime import datetime
-        import uuid
+# async def process_message(to: str, text: str):
+#     try:
+#         logger.info(f"LLM call for {to}: {text[:30]}...")
+#         from datetime import datetime
+#         import uuid
 
-        thread_id = f"{datetime.now().isoformat()}_{to}_{uuid.uuid4().hex}"
-        print(f"Thread ID: {thread_id}")
-        async with httpx.AsyncClient(timeout=100) as client:
-            r = await client.get(LLM_API_URL, params={"question": text, "thread_id": uuid.uuid4().hex, "using_Whatsapp": True})
-        if r.status_code == 200:
-            reply = r.json().get("response", "No response")
-        else:
-            reply = "Sorry, error processing your request."
-            logger.error(f"LLM error {r.status_code}: {r.text}")
-        await send_whatsapp_message(to, reply)
-    except Exception:
+#         thread_id = f"{datetime.now().isoformat()}_{to}_{uuid.uuid4().hex}"
+#         print(f"Thread ID: {thread_id}")
+#         async with httpx.AsyncClient(timeout=100) as client:
+#             r = await client.get(LLM_API_URL, params={"question": text, "thread_id": uuid.uuid4().hex, "using_Whatsapp": True})
+#         if r.status_code == 200:
+#             reply = r.json().get("response", "No response")
+#         else:
+#             reply = "Sorry, error processing your request."
+#             logger.error(f"LLM error {r.status_code}: {r.text}")
+#         await send_whatsapp_message(to, reply)
+#     except Exception:
+#         logger.exception("process_message exception")
+#         try:
+#             await send_whatsapp_message(to, "Sorry, I encountered an error processing your request.")
+#         except Exception as send_exc:
+#             logger.error(f"Failed to send error message: {send_exc}")
+# Replace your existing process_message function with this enhanced version
+async def process_message(to: str, text: str):
+    """Enhanced message processing with Twitter URL support"""
+    try:
+        logger.info(f"Processing message for {to}: {text[:50]}...")
+        
+        # Use the Twitter service to process the message
+        response = await twitter_service.process_message_with_twitter_support(text, to)
+        
+        # Send the response back to WhatsApp
+        await send_whatsapp_message(to, response)
+        
+    except Exception as e:
         logger.exception("process_message exception")
         try:
             await send_whatsapp_message(to, "Sorry, I encountered an error processing your request.")
         except Exception as send_exc:
             logger.error(f"Failed to send error message: {send_exc}")
-
+            
+            
 # async def fetch_media_url(media_id: str) -> bytes:
 #     if not await ensure_valid_token():
 #         logger.error("Cannot fetch media - invalid token")
