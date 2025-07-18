@@ -366,48 +366,31 @@ async def send_read_receipt(message_id: str):
             text = resp.text
             logger.error(f"Read receipt failed: {resp.status_code} {text}")
 
-# async def process_message(to: str, text: str):
-#     try:
-#         logger.info(f"LLM call for {to}: {text[:30]}...")
-#         from datetime import datetime
-#         import uuid
-
-#         thread_id = f"{datetime.now().isoformat()}_{to}_{uuid.uuid4().hex}"
-#         print(f"Thread ID: {thread_id}")
-#         async with httpx.AsyncClient(timeout=100) as client:
-#             r = await client.get(LLM_API_URL, params={"question": text, "thread_id": uuid.uuid4().hex, "using_Whatsapp": True})
-#         if r.status_code == 200:
-#             reply = r.json().get("response", "No response")
-#         else:
-#             reply = "Sorry, error processing your request."
-#             logger.error(f"LLM error {r.status_code}: {r.text}")
-#         await send_whatsapp_message(to, reply)
-#     except Exception:
-#         logger.exception("process_message exception")
-#         try:
-#             await send_whatsapp_message(to, "Sorry, I encountered an error processing your request.")
-#         except Exception as send_exc:
-#             logger.error(f"Failed to send error message: {send_exc}")
-# Replace your existing process_message function with this enhanced version
 async def process_message(to: str, text: str):
-    """Enhanced message processing with Twitter URL support"""
     try:
-        logger.info(f"Processing message for {to}: {text[:50]}...")
-        
-        # Use the Twitter service to process the message
-        response = await twitter_service.process_message_with_twitter_support(text, to)
-        
-        # Send the response back to WhatsApp
-        await send_whatsapp_message(to, response)
-        
-    except Exception as e:
+        logger.info(f"LLM call for {to}: {text[:30]}...")
+        from datetime import datetime
+        import uuid
+
+        thread_id = f"{datetime.now().isoformat()}_{to}_{uuid.uuid4().hex}"
+        enhanced_message = await twitter_service.enhance_message(text)
+
+        print(f"Thread ID: {thread_id}")
+        async with httpx.AsyncClient(timeout=100) as client:
+            r = await client.get(LLM_API_URL, params={"question": enhanced_message, "thread_id": uuid.uuid4().hex, "using_Whatsapp": True})
+        if r.status_code == 200:
+            reply = r.json().get("response", "No response")
+        else:
+            reply = "Sorry, error processing your request."
+            logger.error(f"LLM error {r.status_code}: {r.text}")
+        await send_whatsapp_message(to, reply)
+    except Exception:
         logger.exception("process_message exception")
         try:
             await send_whatsapp_message(to, "Sorry, I encountered an error processing your request.")
         except Exception as send_exc:
             logger.error(f"Failed to send error message: {send_exc}")
-            
-            
+
 # async def fetch_media_url(media_id: str) -> bytes:
 #     if not await ensure_valid_token():
 #         logger.error("Cannot fetch media - invalid token")
