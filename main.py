@@ -29,7 +29,6 @@ WHATSAPP_API_URL = "https://graph.facebook.com/v22.0"
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 # Initialize the Twitter service (add this after your other initializations)
 twitter_service = TwitterService(
-    llm_api_url=LLM_API_URL,
     twitter_bearer_token=os.getenv("TWITTER_BEARER_TOKEN")  # Add this to your .env file
 )
 # App credentials (required for token refresh)
