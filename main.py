@@ -14,6 +14,9 @@ from datetime import datetime, date, timedelta
 import asyncio
 import json
 from twitter_service import TwitterService
+from chatbot_metrics import metrics_service
+import time
+
 
 # Load env
 load_dotenv()
@@ -281,6 +284,65 @@ def cleanup_old_messages():
     if expired:
         logger.info(f"Cleaned up {len(expired)} expired IDs")
 
+# @app.post("/webhook")
+# async def webhook_handler(req: WebhookRequest):
+#     if req.object != "whatsapp_business_account":
+#         return Response(status_code=404)
+
+#     # Ensure we have a valid token before processing
+#     if not await ensure_valid_token():
+#         logger.error("Cannot process webhook - invalid token")
+#         return Response(status_code=500)
+
+#     cleanup_old_messages()
+
+#     for entry in req.entry:
+#         for change in entry.get("changes", []):
+#             if change.get("field") != "messages":
+#                 continue
+#             data = change.get("value", {})
+#             messages = data.get("messages", [])
+
+#             for msg in messages:
+#                 sender = msg.get("from")
+#                 msg_id = msg.get("id")
+
+#                 # skip if from business
+#                 if sender == PHONE_NUMBER_ID:
+#                     continue
+
+#                 # dedupe
+#                 if msg_id in processed_messages:
+#                     logger.info(f"Skipping duplicate: {msg_id}")
+#                     continue
+#                 processed_messages[msg_id] = time.time()
+
+#                 # mark read asynchronously
+#                 asyncio.create_task(send_read_receipt(msg_id))
+
+#                 # dispatch asynchronously
+
+#                 mtype = msg.get("type")
+#                 print("****************************************************************")
+#                 print(f"Received message from {sender}: {msg_id} type={mtype}")
+#                 print("****************************************************************")
+
+#                 if mtype == "text":
+#                     text = msg["text"]["body"]
+#                     asyncio.create_task(process_message(sender, text))
+#                 elif mtype in ["image","audio","video"]:
+#                     media = msg[mtype]
+#                     text = await fetch_and_extract_media_text(media.get("id"))
+#                     if text:
+#                         asyncio.create_task(process_message(sender, text))
+#                     # content = await fetch_media_url(media.get("id"))
+#                     # print(f"Media content fetched: {len(content)} bytes", content)
+#                     # if content:
+#                     #     text = await extract_text_from_media(content)
+#                     #     asyncio.create_task(process_message(sender, text))
+
+#     return {"status": "success"}
+
 @app.post("/webhook")
 async def webhook_handler(req: WebhookRequest):
     if req.object != "whatsapp_business_account":
@@ -303,6 +365,7 @@ async def webhook_handler(req: WebhookRequest):
             for msg in messages:
                 sender = msg.get("from")
                 msg_id = msg.get("id")
+                mtype = msg.get("type")
 
                 # skip if from business
                 if sender == PHONE_NUMBER_ID:
@@ -317,26 +380,35 @@ async def webhook_handler(req: WebhookRequest):
                 # mark read asynchronously
                 asyncio.create_task(send_read_receipt(msg_id))
 
-                # dispatch asynchronously
-
-                mtype = msg.get("type")
                 print("****************************************************************")
                 print(f"Received message from {sender}: {msg_id} type={mtype}")
                 print("****************************************************************")
 
                 if mtype == "text":
                     text = msg["text"]["body"]
-                    asyncio.create_task(process_message(sender, text))
-                elif mtype in ["image","audio","video"]:
+                    # Pass message_id and type to process_message
+                    asyncio.create_task(process_message(sender, text, msg_id, "text"))
+                    
+                elif mtype in ["image", "audio", "video"]:
                     media = msg[mtype]
                     text = await fetch_and_extract_media_text(media.get("id"))
                     if text:
-                        asyncio.create_task(process_message(sender, text))
-                    # content = await fetch_media_url(media.get("id"))
-                    # print(f"Media content fetched: {len(content)} bytes", content)
-                    # if content:
-                    #     text = await extract_text_from_media(content)
-                    #     asyncio.create_task(process_message(sender, text))
+                        # Pass message_id and actual media type
+                        asyncio.create_task(process_message(sender, text, msg_id, mtype))
+                    else:
+                        # Record failed media processing
+                        metrics_service.record_message_complete(
+                            user_id=sender,
+                            message_id=msg_id,
+                            message_type=mtype,
+                            message_text=f"[{mtype.upper()} - processing failed]",
+                            response_text="",
+                            start_time=time.time(),
+                            llm_response_time=0,
+                            whatsapp_send_time=0,
+                            success=False,
+                            error_type="MEDIA_PROCESSING_FAILED"
+                        )
 
     return {"status": "success"}
 
@@ -365,30 +437,144 @@ async def send_read_receipt(message_id: str):
             text = resp.text
             logger.error(f"Read receipt failed: {resp.status_code} {text}")
 
-async def process_message(to: str, text: str):
+# async def process_message(to: str, text: str):
+#     try:
+#         logger.info(f"LLM call for {to}: {text[:30]}...")
+#         from datetime import datetime
+#         import uuid
+
+#         thread_id = f"{datetime.now().isoformat()}_{to}_{uuid.uuid4().hex}"
+#         enhanced_message = await twitter_service.enhance_message(text)
+
+#         print(f"Thread ID: {thread_id}")
+#         async with httpx.AsyncClient(timeout=100) as client:
+#             r = await client.get(LLM_API_URL, params={"question": enhanced_message, "thread_id": uuid.uuid4().hex, "using_Whatsapp": True})
+#         if r.status_code == 200:
+#             reply = r.json().get("response", "No response")
+#         else:
+#             reply = "Sorry, error processing your request."
+#             logger.error(f"LLM error {r.status_code}: {r.text}")
+#         await send_whatsapp_message(to, reply)
+#     except Exception:
+#         logger.exception("process_message exception")
+#         try:
+#             await send_whatsapp_message(to, "Sorry, I encountered an error processing your request.")
+#         except Exception as send_exc:
+#             logger.error(f"Failed to send error message: {send_exc}")
+
+async def process_message(to: str, text: str, message_id: str = None, message_type: str = "text"):
+    """Enhanced process_message with comprehensive metrics tracking"""
+    
+    # Start metrics tracking
+    start_time = metrics_service.start_message_processing(to, message_id or f"msg_{int(time.time())}", message_type, text)
+    
+    # Initialize timing variables
+    llm_start_time = None
+    llm_end_time = None
+    whatsapp_start_time = None
+    whatsapp_end_time = None
+    
+    # Initialize response variables
+    success = False
+    error_type = None
+    response = ""
+    enhanced_by_twitter = False
+    
     try:
-        logger.info(f"LLM call for {to}: {text[:30]}...")
+        logger.info(f"Processing message from {to}: {text[:50]}...")
+        
         from datetime import datetime
         import uuid
 
         thread_id = f"{datetime.now().isoformat()}_{to}_{uuid.uuid4().hex}"
-        enhanced_message = await twitter_service.enhance_message(text)
+        
+        # Twitter enhancement
+        try:
+            enhanced_message = await twitter_service.enhance_message(text)
+            enhanced_by_twitter = enhanced_message != text
+        except Exception as e:
+            logger.warning(f"Twitter enhancement failed: {e}")
+            enhanced_message = text
+            enhanced_by_twitter = False
 
         print(f"Thread ID: {thread_id}")
-        async with httpx.AsyncClient(timeout=100) as client:
-            r = await client.get(LLM_API_URL, params={"question": enhanced_message, "thread_id": uuid.uuid4().hex, "using_Whatsapp": True})
-        if r.status_code == 200:
-            reply = r.json().get("response", "No response")
-        else:
-            reply = "Sorry, error processing your request."
-            logger.error(f"LLM error {r.status_code}: {r.text}")
-        await send_whatsapp_message(to, reply)
-    except Exception:
-        logger.exception("process_message exception")
+        
+        # LLM API call with timing
+        llm_start_time = time.time()
         try:
-            await send_whatsapp_message(to, "Sorry, I encountered an error processing your request.")
+            async with httpx.AsyncClient(timeout=100) as client:
+                r = await client.get(LLM_API_URL, params={
+                    "question": enhanced_message, 
+                    "thread_id": uuid.uuid4().hex, 
+                    "using_Whatsapp": True
+                })
+            llm_end_time = time.time()
+            
+            if r.status_code == 200:
+                response = r.json().get("response", "No response")
+                success = True
+            else:
+                response = "Sorry, error processing your request."
+                error_type = f"LLM_HTTP_{r.status_code}"
+                logger.error(f"LLM API error {r.status_code}: {r.text}")
+                
+        except asyncio.TimeoutError:
+            llm_end_time = time.time()
+            response = "Sorry, request timed out. Please try again."
+            error_type = "LLM_TIMEOUT"
+            logger.error("LLM API timeout")
+        except Exception as e:
+            llm_end_time = time.time()
+            response = "Sorry, error processing your request."
+            error_type = f"LLM_EXCEPTION_{type(e).__name__}"
+            logger.error(f"LLM API exception: {e}")
+        
+        # WhatsApp send with timing
+        whatsapp_start_time = time.time()
+        try:
+            await send_whatsapp_message(to, response)
+            whatsapp_end_time = time.time()
+        except Exception as e:
+            whatsapp_end_time = time.time()
+            error_type = f"WHATSAPP_SEND_{type(e).__name__}"
+            success = False
+            logger.error(f"WhatsApp send failed: {e}")
+            
+    except Exception as e:
+        error_type = f"PROCESS_EXCEPTION_{type(e).__name__}"
+        success = False
+        logger.exception("Unexpected error in process_message")
+        
+        # Try to send error message
+        try:
+            response = "Sorry, I encountered an error processing your request."
+            whatsapp_start_time = time.time()
+            await send_whatsapp_message(to, response)
+            whatsapp_end_time = time.time()
         except Exception as send_exc:
+            whatsapp_end_time = time.time() if whatsapp_start_time else None
             logger.error(f"Failed to send error message: {send_exc}")
+    
+    finally:
+        # Calculate timing metrics
+        llm_response_time = (llm_end_time - llm_start_time) if llm_start_time and llm_end_time else 0
+        whatsapp_send_time = (whatsapp_end_time - whatsapp_start_time) if whatsapp_start_time and whatsapp_end_time else 0
+        
+        # Record comprehensive metrics
+        metrics_service.record_message_complete(
+            user_id=to,
+            message_id=message_id or f"msg_{int(time.time())}",
+            message_type=message_type,
+            message_text=text,
+            response_text=response,
+            start_time=start_time,
+            llm_response_time=llm_response_time,
+            whatsapp_send_time=whatsapp_send_time,
+            success=success,
+            error_type=error_type,
+            enhanced_by_twitter=enhanced_by_twitter
+        )
+
 
 # async def fetch_media_url(media_id: str) -> bytes:
 #     if not await ensure_valid_token():
@@ -558,14 +744,92 @@ async def token_status():
         "auto_detected": True  # Everything is auto-detected
     }
 
+@app.get("/metrics")
+async def get_chatbot_metrics(hours: int = 24):
+    """Get comprehensive chatbot performance metrics
+    
+    Args:
+        hours: Time period in hours (default: 24)
+    
+    Returns:
+        Detailed performance metrics including response times, success rates, user engagement
+    """
+    try:
+        return metrics_service.get_performance_metrics(hours)
+    except Exception as e:
+        logger.error(f"Error getting metrics: {e}")
+        return {"error": "Failed to retrieve metrics", "details": str(e)}
+
+@app.get("/metrics/summary")
+async def get_metrics_summary():
+    """Get quick metrics summary for dashboards"""
+    try:
+        return metrics_service.get_metrics_summary()
+    except Exception as e:
+        logger.error(f"Error getting metrics summary: {e}")
+        return {"error": "Failed to retrieve metrics summary", "details": str(e)}
+
+@app.get("/metrics/users")
+async def get_user_analytics(user_id: str = None):
+    """Get user analytics - specific user or aggregate stats
+    
+    Args:
+        user_id: Optional specific user ID to analyze
+    
+    Returns:
+        User engagement and behavior analytics
+    """
+    try:
+        return metrics_service.get_user_analytics(user_id)
+    except Exception as e:
+        logger.error(f"Error getting user analytics: {e}")
+        return {"error": "Failed to retrieve user analytics", "details": str(e)}
+
+@app.get("/metrics/health")
+async def get_health_check():
+    """Get chatbot health status"""
+    try:
+        summary = metrics_service.get_metrics_summary()
+        return {
+            "status": summary.get("status", "unknown"),
+            "health_score": summary.get("health_score", 0),
+            "last_hour_messages": summary.get("current_hour", {}).get("messages", 0),
+            "last_24h_success_rate": summary.get("last_24_hours", {}).get("success_rate", 0),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting health check: {e}")
+        return {
+            "status": "error", 
+            "health_score": 0,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
 @app.get("/status")
 async def status():
-    token_info = await token_status()
-    return {
-        "processed_messages": len(processed_messages),
-        "server_time": datetime.now().isoformat(),
-        "token_status": token_info
-    }
+    try:
+        token_info = await token_status()
+        metrics_summary = metrics_service.get_metrics_summary()
+        
+        return {
+            "processed_messages": len(processed_messages),
+            "server_time": datetime.now().isoformat(),
+            "token_status": token_info,
+            "chatbot_health": {
+                "health_score": metrics_summary.get("health_score", 0),
+                "status": metrics_summary.get("status", "unknown"),
+                "messages_24h": metrics_summary.get("last_24_hours", {}).get("messages", 0),
+                "success_rate_24h": metrics_summary.get("last_24_hours", {}).get("success_rate", 0)
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error in status endpoint: {e}")
+        return {
+            "processed_messages": len(processed_messages),
+            "server_time": datetime.now().isoformat(),
+            "error": "Failed to retrieve complete status"
+        }
 
 # Background task to periodically check and refresh token
 async def token_refresh_background_task():
