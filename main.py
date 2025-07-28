@@ -125,29 +125,101 @@ class WebhookRequest(BaseModel):
     entry: List[Dict[str, Any]]
     
     
+# async def analyze_image_url(image_url: str) -> Optional[str]:
+#     """
+#     Call your boomlive analyze-url endpoint and return the 'lens_context.context' string.
+#     """
+#     # params = {"image_url": image_url}
+#     try:
+#         print("Image URL is", image_url)
+#         api = f"https://jscw8gocc0k4s00gkcskcokc.vps.boomlive.in/analyze-url/?image_url={image_url}"
+
+#         print("API URL: ", api)
+#         async with httpx.AsyncClient() as client:
+#             resp = await client.post(api,  headers={"accept": "application/json"})
+#         resp.raise_for_status()
+#         body = resp.json()
+#         print("RESPONSE:", body)
+#         result = body.get("lens_context", {}).get("context")
+#         print("Result: ",result)
+#         return body.get("lens_context", {}).get("context")
+#     except Exception as e:
+#         logger.error(f"analyze_image_url failed for {image_url}: {e}")
+#         return None
+
 async def analyze_image_url(image_url: str) -> Optional[str]:
     """
     Call your boomlive analyze-url endpoint and return the 'lens_context.context' string.
     """
-    # params = {"image_url": image_url}
     try:
-        print("Image URL is", image_url)
+        print(f"=== analyze_image_url DEBUG START ===")
+        print(f"Image URL: {image_url}")
+        
         api = f"https://jscw8gocc0k4s00gkcskcokc.vps.boomlive.in/analyze-url/?image_url={image_url}"
-
-        print("API URL: ", api)
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(api,  headers={"accept": "application/json"})
-        resp.raise_for_status()
-        body = resp.json()
-        print("RESPONSE:", body)
-        result = body.get("lens_context", {}).get("context")
-        print("Result: ",result)
-        return body.get("lens_context", {}).get("context")
-    except Exception as e:
-        logger.error(f"analyze_image_url failed for {image_url}: {e}")
+        print(f"API URL: {api}")
+        
+        print("Creating HTTP client...")
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            print("Making POST request...")
+            resp = await client.post(api, headers={"accept": "application/json"})
+            
+            print(f"Response received:")
+            print(f"  Status code: {resp.status_code}")
+            print(f"  Headers: {dict(resp.headers)}")
+            print(f"  Content length: {len(resp.content)} bytes")
+            print(f"  Raw content (first 1000 chars): {resp.text[:1000]}")
+            
+            if resp.status_code != 200:
+                print(f"ERROR: Non-200 status code: {resp.status_code}")
+                print(f"ERROR: Response text: {resp.text}")
+                return None
+            
+            print("Parsing JSON response...")
+            try:
+                body = resp.json()
+                print(f"JSON parsed successfully: {body}")
+            except Exception as json_e:
+                print(f"JSON parsing failed: {type(json_e).__name__}: {json_e}")
+                print(f"Raw response that failed to parse: {resp.text}")
+                return None
+            
+            print("Extracting lens_context...")
+            lens_context = body.get("lens_context")
+            print(f"lens_context: {lens_context}")
+            
+            if lens_context is None:
+                print("WARNING: No 'lens_context' key in response")
+                print(f"Available keys: {list(body.keys())}")
+                return None
+            
+            context = lens_context.get("context")
+            print(f"Final context result: {context}")
+            print(f"=== analyze_image_url DEBUG END ===")
+            
+            return context
+            
+    except httpx.TimeoutException as e:
+        print(f"TIMEOUT ERROR: {e}")
+        logger.error(f"analyze_image_url timeout for {image_url}: {e}")
         return None
-
-
+    except httpx.HTTPStatusError as e:
+        print(f"HTTP STATUS ERROR: {e}")
+        print(f"Response status: {e.response.status_code}")
+        print(f"Response text: {e.response.text}")
+        logger.error(f"analyze_image_url HTTP error for {image_url}: {e.response.status_code} - {e.response.text}")
+        return None
+    except httpx.RequestError as e:
+        print(f"REQUEST ERROR: {e}")
+        logger.error(f"analyze_image_url request error for {image_url}: {e}")
+        return None
+    except Exception as e:
+        print(f"UNEXPECTED ERROR: {type(e).__name__}: {e}")
+        import traceback
+        print(f"Full traceback:")
+        traceback.print_exc()
+        logger.error(f"analyze_image_url unexpected error for {image_url}: {type(e).__name__}: {e}")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        return None
 async def get_token_info(token: str) -> Optional[Dict]:
     """Get token information including expiration time"""
     try:
