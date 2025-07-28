@@ -129,12 +129,12 @@ async def analyze_image_url(image_url: str) -> Optional[str]:
     """
     Call your boomlive analyze-url endpoint and return the 'lens_context.context' string.
     """
-    api = "https://jscw8gocc0k4s00gkcskcokc.vps.boomlive.in/analyze-url/"
-    params = {"image_url": image_url}
+    api = f"https://jscw8gocc0k4s00gkcskcokc.vps.boomlive.in/analyze-url/?image_url={image_url}"
+    # params = {"image_url": image_url}
     try:
         print("Image URL is", image_url)
         async with httpx.AsyncClient() as client:
-            resp = await client.post(api, params=params, headers={"accept": "application/json"})
+            resp = await client.post(api,  headers={"accept": "application/json"})
         resp.raise_for_status()
         body = resp.json()
         result = body.get("lens_context", {}).get("context")
