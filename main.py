@@ -16,6 +16,7 @@ import json
 from twitter_service import TwitterService
 from chatbot_metrics import metrics_service
 import time
+from fastapi.staticfiles import StaticFiles
 
 
 # Load env
@@ -61,6 +62,57 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+if not os.path.exists("media"):
+    os.makedirs("media")
+app.mount("/media", StaticFiles(directory="media"), name="media")
+
+import uuid
+import pathlib
+
+async def download_and_host_media(media_id: str) -> Optional[str]:
+    """
+    1) Fetch the WhatsApp media URL
+    2) Download the binary
+    3) Save as media/{uuid}.{ext}
+    4) Return the hosted URL (/media/...)
+    """
+    # 1️⃣ get the ephemeral URL
+    url_resp = await httpx.AsyncClient().get(
+        f"{WHATSAPP_API_URL}/{media_id}",
+        headers={"Authorization": f"Bearer {ACCESS_TOKEN}"}
+    )
+    if url_resp.status_code == 401:
+        await refresh_access_token()
+        url_resp = await httpx.AsyncClient().get(
+            f"{WHATSAPP_API_URL}/{media_id}",
+            headers={"Authorization": f"Bearer {ACCESS_TOKEN}"}
+        )
+    if url_resp.status_code != 200:
+        logger.error(f"Failed to fetch media URL: {url_resp.status_code}")
+        return None
+
+    media_url = url_resp.json().get("url")
+    if not media_url:
+        logger.error("No URL field in WhatsApp media response")
+        return None
+
+    # 2️⃣ download the binary
+    data_resp = await httpx.AsyncClient().get(media_url)
+    if data_resp.status_code != 200:
+        logger.error(f"Failed to download media: {data_resp.status_code}")
+        return None
+
+    # 3️⃣ build a filename with correct extension
+    content_type = data_resp.headers.get("Content-Type", "")
+    ext = content_type.split("/")[-1] or "bin"
+    filename = f"{uuid.uuid4().hex}.{ext}"
+    path = pathlib.Path("media") / filename
+
+    # 4️⃣ save to disk
+    path.write_bytes(data_resp.content)
+
+    # 5️⃣ return the public URL
+    return f"/media/{filename}"
 
 class WebhookRequest(BaseModel):
     object: str
@@ -409,22 +461,27 @@ async def webhook_handler(req: WebhookRequest):
                     asyncio.create_task(process_message(sender, text, msg_id, "text"))
                 elif mtype == "image":
                     media = msg["image"]
-                    # 1️⃣ fetch the media URL
-                    whatsapp_meta = await fetch_whatsapp_media_url(media["id"])
-                    if not whatsapp_meta:
-                        continue
 
-                    image_url = whatsapp_meta  # this should be the direct URL from WhatsApp
-
-                    # 2️⃣ call analyze-url for “lens_context”
-                    context = await analyze_image_url(image_url)
-                    if context:
-                        # 3️⃣ send *that* context to your LLM workflow
-                        asyncio.create_task(process_message(sender, context, msg_id, "image"))
-                    else:
-                        # fallback: maybe OCR or a default message
+                    # 🔄 download & host on your server
+                    hosted_url = await download_and_host_media(media["id"])
+                    if not hosted_url:
+                        # fallback immediately if we couldn’t host
                         text = await fetch_and_extract_media_text(media["id"])
-                        asyncio.create_task(process_message(sender, text or "[no text]", msg_id, "image"))
+                        return asyncio.create_task(process_message(sender, text or "[no text]", msg_id, "image"))
+
+                    # Now hosted_url is something like "/media/abcd1234.jpg"
+                    # Prepend your domain if needed:
+                    full_url = f"https://bo0c8okoc8g8044wowgggk44.vps.boomlive.in{hosted_url}"
+                    print("Image URL:", full_url)
+                    # 1️⃣ analyze-url call
+                    context = await analyze_image_url(full_url)
+                    if context:
+                        return asyncio.create_task(process_message(sender, context, msg_id, "image"))
+
+                    # 2️⃣ fallback OCR
+                    text = await fetch_and_extract_media_text(media["id"])
+                    return asyncio.create_task(process_message(sender, text or "[no text]", msg_id, "image"))
+
     
                 elif mtype in ["image", "audio", "video"]:
                     media = msg[mtype]
