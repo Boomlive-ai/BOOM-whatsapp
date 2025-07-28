@@ -129,10 +129,11 @@ async def analyze_image_url(image_url: str) -> Optional[str]:
     """
     Call your boomlive analyze-url endpoint and return the 'lens_context.context' string.
     """
-    api = f"https://jscw8gocc0k4s00gkcskcokc.vps.boomlive.in/analyze-url/?image_url={image_url}"
     # params = {"image_url": image_url}
     try:
         print("Image URL is", image_url)
+        api = f"https://jscw8gocc0k4s00gkcskcokc.vps.boomlive.in/analyze-url/?image_url={image_url}"
+
         print("API URL: ", api)
         async with httpx.AsyncClient() as client:
             resp = await client.post(api,  headers={"accept": "application/json"})
@@ -347,21 +348,41 @@ async def handle_image_message(to: str, media_id: str, msg_id: str):
     Download from WhatsApp, host locally, call lens-context API,
     then feed either the context or OCR text into process_message().
     """
-    # 1) Download & host
-    hosted_path = await download_and_host_media(media_id)
-    if hosted_path:
-        full_url = f"https://bo0c8okoc8g8044wowgggk44.vps.boomlive.in{hosted_path}"
-        logger.info("Hosted image URL: %s", full_url)
+    try:
+        # 1) Download & host
+        hosted_path = await download_and_host_media(media_id)
+        if hosted_path:
+            full_url = f"https://bo0c8okoc8g8044wowgggk44.vps.boomlive.in{hosted_path}"
+            logger.info("Hosted image URL: %s", full_url)
 
-        # 2) Try lens-context API first
-        context = await analyze_image_url(full_url)
-        if context:
-            await process_message(to, context, msg_id, "image")
-            return
+            # 2) Try lens-context API first
+            try:
+                logger.info("Calling analyze_image_url...")
+                context = await analyze_image_url(full_url)
+                logger.info(f"analyze_image_url returned: {context}")
+                
+                if context:
+                    await process_message(to, context, msg_id, "image")
+                    return
+                else:
+                    logger.warning("analyze_image_url returned None/empty")
+                    
+            except Exception as e:
+                logger.error(f"Error in analyze_image_url call: {type(e).__name__}: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
 
-    # 3) Fallback: OCR/text extraction
-    text = await fetch_and_extract_media_text(media_id)
-    await process_message(to, text or "[no text]", msg_id, "image")
+        # 3) Fallback: OCR/text extraction
+        logger.info("Falling back to OCR text extraction...")
+        text = await fetch_and_extract_media_text(media_id)
+        await process_message(to, text or "[no text]", msg_id, "image")
+        
+    except Exception as e:
+        logger.error(f"Error in handle_image_message: {type(e).__name__}: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        # Still try to send some response
+        await process_message(to, "[image processing failed]", msg_id, "image")
 @app.get("/")
 async def root():
     return {"message": "Webhook running", "verify_token": VERIFY_TOKEN}
