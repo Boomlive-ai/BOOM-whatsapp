@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import os
@@ -926,6 +926,17 @@ async def get_health_check():
             "timestamp": datetime.now().isoformat()
         }
 
+from fastapi import HTTPException
+from typing import Optional
+
+@app.get("/analyze-image")
+async def analyze_image(image_url: str) -> dict:
+    result = await analyze_image_url(image_url)
+    if result is None:
+        raise HTTPException(status_code=500, detail="Analysis failed")
+    return {"context": result}
+
+
 @app.get("/status")
 async def status():
     try:
@@ -961,6 +972,7 @@ async def token_refresh_background_task():
                 logger.error("Background token refresh failed")
         except Exception as e:
             logger.error(f"Background token refresh error: {e}")
+
 
 @app.on_event("startup")
 async def startup_event():
