@@ -138,7 +138,7 @@ async def analyze_image_url(image_url: str) -> Optional[str]:
             resp = await client.post(api,  headers={"accept": "application/json"})
         resp.raise_for_status()
         body = resp.json()
-        print("RESPONSE:" body)
+        print("RESPONSE:", body)
         result = body.get("lens_context", {}).get("context")
         print("Result: ",result)
         return body.get("lens_context", {}).get("context")
