@@ -65,7 +65,23 @@ app.add_middleware(
 class WebhookRequest(BaseModel):
     object: str
     entry: List[Dict[str, Any]]
-
+    
+    
+async def analyze_image_url(image_url: str) -> Optional[str]:
+    """
+    Call your boomlive analyze-url endpoint and return the 'lens_context.context' string.
+    """
+    api = "https://jscw8gocc0k4s00gkcskcokc.vps.boomlive.in/analyze-url/"
+    params = {"image_url": image_url}
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(api, params=params, headers={"accept": "application/json"})
+        resp.raise_for_status()
+        body = resp.json()
+        return body.get("lens_context", {}).get("context")
+    except Exception as e:
+        logger.error(f"analyze_image_url failed for {image_url}: {e}")
+        return None
 async def get_token_info(token: str) -> Optional[Dict]:
     """Get token information including expiration time"""
     try:
@@ -388,7 +404,25 @@ async def webhook_handler(req: WebhookRequest):
                     text = msg["text"]["body"]
                     # Pass message_id and type to process_message
                     asyncio.create_task(process_message(sender, text, msg_id, "text"))
-                    
+                elif mtype == "image":
+                    media = msg["image"]
+                    # 1️⃣ fetch the media URL
+                    whatsapp_meta = await fetch_whatsapp_media_url(media["id"])
+                    if not whatsapp_meta:
+                        continue
+
+                    image_url = whatsapp_meta  # this should be the direct URL from WhatsApp
+
+                    # 2️⃣ call analyze-url for “lens_context”
+                    context = await analyze_image_url(image_url)
+                    if context:
+                        # 3️⃣ send *that* context to your LLM workflow
+                        asyncio.create_task(process_message(sender, context, msg_id, "image"))
+                    else:
+                        # fallback: maybe OCR or a default message
+                        text = await fetch_and_extract_media_text(media["id"])
+                        asyncio.create_task(process_message(sender, text or "[no text]", msg_id, "image"))
+    
                 elif mtype in ["image", "audio", "video"]:
                     media = msg[mtype]
                     text = await fetch_and_extract_media_text(media.get("id"))
@@ -611,6 +645,25 @@ async def process_message(to: str, text: str, message_id: str = None, message_ty
 #         r = await client.post(url, files={"file": (tmp, data)})
 #     os.remove(tmp)
 #     return r.json().get("extracted_text", "") if r.status_code == 200 else ""
+async def fetch_whatsapp_media_url(media_id: str) -> Optional[str]:
+    """Return the WhatsApp‑hosted URL for a media ID (no processing)."""
+    if not await ensure_valid_token():
+        return None
+
+    r = await httpx.AsyncClient().get(
+        f"{WHATSAPP_API_URL}/{media_id}",
+        headers={"Authorization": f"Bearer {ACCESS_TOKEN}"}
+    )
+    if r.status_code == 401:
+        await refresh_access_token()
+        r = await httpx.AsyncClient().get(
+            f"{WHATSAPP_API_URL}/{media_id}",
+            headers={"Authorization": f"Bearer {ACCESS_TOKEN}"}
+        )
+    if r.status_code == 200:
+        return r.json().get("url")
+    logger.error(f"Failed to fetch media URL ({r.status_code}): {r.text}")
+    return None
 
 
 async def fetch_and_extract_media_text(media_id: str) -> str:
