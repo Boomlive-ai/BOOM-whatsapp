@@ -74,6 +74,7 @@ async def analyze_image_url(image_url: str) -> Optional[str]:
     api = "https://jscw8gocc0k4s00gkcskcokc.vps.boomlive.in/analyze-url/"
     params = {"image_url": image_url}
     try:
+        print("Image URL is", image_url)
         async with httpx.AsyncClient() as client:
             resp = await client.post(api, params=params, headers={"accept": "application/json"})
         resp.raise_for_status()
