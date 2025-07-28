@@ -332,7 +332,26 @@ async def ensure_valid_token() -> bool:
             return False
     
     return True
+async def handle_image_message(to: str, media_id: str, msg_id: str):
+    """
+    Download from WhatsApp, host locally, call lens-context API,
+    then feed either the context or OCR text into process_message().
+    """
+    # 1) Download & host
+    hosted_path = await download_and_host_media(media_id)
+    if hosted_path:
+        full_url = f"https://bo0c8okoc8g8044wowgggk44.vps.boomlive.in{hosted_path}"
+        logger.info("Hosted image URL: %s", full_url)
 
+        # 2) Try lens-context API first
+        context = await analyze_image_url(full_url)
+        if context:
+            await process_message(to, context, msg_id, "image")
+            return
+
+    # 3) Fallback: OCR/text extraction
+    text = await fetch_and_extract_media_text(media_id)
+    await process_message(to, text or "[no text]", msg_id, "image")
 @app.get("/")
 async def root():
     return {"message": "Webhook running", "verify_token": VERIFY_TOKEN}
@@ -460,27 +479,9 @@ async def webhook_handler(req: WebhookRequest):
                     # Pass message_id and type to process_message
                     asyncio.create_task(process_message(sender, text, msg_id, "text"))
                 elif mtype == "image":
-                    media = msg["image"]
-
-                    # 🔄 download & host on your server
-                    hosted_url = await download_and_host_media(media["id"])
-                    if not hosted_url:
-                        # fallback immediately if we couldn’t host
-                        text = await fetch_and_extract_media_text(media["id"])
-                        return asyncio.create_task(process_message(sender, text or "[no text]", msg_id, "image"))
-
-                    # Now hosted_url is something like "/media/abcd1234.jpg"
-                    # Prepend your domain if needed:
-                    full_url = f"https://bo0c8okoc8g8044wowgggk44.vps.boomlive.in{hosted_url}"
-                    print("Image URL:", full_url)
-                    # 1️⃣ analyze-url call
-                    context = await analyze_image_url(full_url)
-                    if context:
-                        return asyncio.create_task(process_message(sender, context, msg_id, "image"))
-
-                    # 2️⃣ fallback OCR
-                    text = await fetch_and_extract_media_text(media["id"])
-                    return asyncio.create_task(process_message(sender, text or "[no text]", msg_id, "image"))
+                    # schedule the full image workflow; handler returns immediately
+                    media_id = msg["image"]["id"]
+                    asyncio.create_task(handle_image_message(sender, media_id, msg_id))
 
     
                 elif mtype in ["image", "audio", "video"]:
