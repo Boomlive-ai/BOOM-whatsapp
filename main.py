@@ -133,16 +133,20 @@ async def analyze_image_url(image_url: str) -> Optional[str]:
     # params = {"image_url": image_url}
     try:
         print("Image URL is", image_url)
+        print("API URL: ", api)
         async with httpx.AsyncClient() as client:
             resp = await client.post(api,  headers={"accept": "application/json"})
         resp.raise_for_status()
         body = resp.json()
+        print("RESPONSE:" body)
         result = body.get("lens_context", {}).get("context")
         print("Result: ",result)
         return body.get("lens_context", {}).get("context")
     except Exception as e:
         logger.error(f"analyze_image_url failed for {image_url}: {e}")
         return None
+
+
 async def get_token_info(token: str) -> Optional[Dict]:
     """Get token information including expiration time"""
     try:
@@ -490,7 +494,7 @@ async def webhook_handler(req: WebhookRequest):
                     asyncio.create_task(handle_image_message(sender, media_id, msg_id))
 
     
-                elif mtype in ["image", "audio", "video"]:
+                elif mtype in ["audio", "video"]:
                     media = msg[mtype]
                     text = await fetch_and_extract_media_text(media.get("id"))
                     if text:
