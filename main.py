@@ -68,39 +68,45 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 
 import uuid
 import pathlib
+from typing import Optional
 
 async def download_and_host_media(media_id: str) -> Optional[str]:
     """
     1) Fetch the WhatsApp media URL
-    2) Download the binary
+    2) Download the binary (with auth header!)
     3) Save as media/{uuid}.{ext}
     4) Return the hosted URL (/media/...)
     """
-    # 1️⃣ get the ephemeral URL
-    url_resp = await httpx.AsyncClient().get(
-        f"{WHATSAPP_API_URL}/{media_id}",
-        headers={"Authorization": f"Bearer {ACCESS_TOKEN}"}
-    )
-    if url_resp.status_code == 401:
-        await refresh_access_token()
-        url_resp = await httpx.AsyncClient().get(
+    async with httpx.AsyncClient() as client:
+        # 1️⃣ get the ephemeral URL
+        url_resp = await client.get(
             f"{WHATSAPP_API_URL}/{media_id}",
             headers={"Authorization": f"Bearer {ACCESS_TOKEN}"}
         )
-    if url_resp.status_code != 200:
-        logger.error(f"Failed to fetch media URL: {url_resp.status_code}")
-        return None
+        if url_resp.status_code == 401:
+            await refresh_access_token()
+            url_resp = await client.get(
+                f"{WHATSAPP_API_URL}/{media_id}",
+                headers={"Authorization": f"Bearer {ACCESS_TOKEN}"}
+            )
+        if url_resp.status_code != 200:
+            logger.error(f"Failed to fetch media URL: {url_resp.status_code}")
+            return None
 
-    media_url = url_resp.json().get("url")
-    if not media_url:
-        logger.error("No URL field in WhatsApp media response")
-        return None
+        media_url = url_resp.json().get("url")
+        if not media_url:
+            logger.error("No URL field in WhatsApp media response")
+            return None
 
-    # 2️⃣ download the binary
-    data_resp = await httpx.AsyncClient().get(media_url)
-    if data_resp.status_code != 200:
-        logger.error(f"Failed to download media: {data_resp.status_code}")
-        return None
+        # 2️⃣ download the binary **with** the auth header
+        data_resp = await client.get(media_url, headers={"Authorization": f"Bearer {ACCESS_TOKEN}"})
+        if data_resp.status_code == 401:
+            # try refreshing once more
+            await refresh_access_token()
+            data_resp = await client.get(media_url, headers={"Authorization": f"Bearer {ACCESS_TOKEN}"})
+        if data_resp.status_code != 200:
+            logger.error(f"Failed to download media: {data_resp.status_code}")
+            return None
 
     # 3️⃣ build a filename with correct extension
     content_type = data_resp.headers.get("Content-Type", "")
