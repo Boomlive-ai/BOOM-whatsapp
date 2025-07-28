@@ -78,6 +78,8 @@ async def analyze_image_url(image_url: str) -> Optional[str]:
             resp = await client.post(api, params=params, headers={"accept": "application/json"})
         resp.raise_for_status()
         body = resp.json()
+        result = body.get("lens_context", {}).get("context")
+        print("Result: ",result)
         return body.get("lens_context", {}).get("context")
     except Exception as e:
         logger.error(f"analyze_image_url failed for {image_url}: {e}")
