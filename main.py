@@ -456,7 +456,50 @@ async def handle_image_message(to: str, media_id: str, msg_id: str):
         # Still try to send some response
         await process_message(to, "[image processing failed]", msg_id, "image")
         
-        
+async def analyze_video_url(video_url: str) -> Optional[str]:
+    """
+    Call your boomlive analyze-video-url endpoint and return the 'concise_query' string.
+    """
+    try:
+        logger.info(f"=== analyze_video_url DEBUG START ===")
+        logger.info(f"Video URL: {video_url}")
+
+        api = f"https://jscw8gocc0k4s00gkcskcokc.vps.boomlive.in/analyze-video-url/?video_url={video_url}"
+        logger.info(f"API URL: {api}")
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(api, headers={"accept": "application/json"})
+
+            logger.info(f"Response received: status={resp.status_code}, length={len(resp.content)} bytes")
+            logger.debug(f"Response content (first 1000 chars): {resp.text[:1000]}")
+
+            if resp.status_code != 200:
+                logger.error(f"Error: Non-200 status code {resp.status_code}")
+                logger.error(f"Response text: {resp.text}")
+                return None
+
+            body = resp.json()
+
+            video_context = body.get("video_context")
+            if video_context is None:
+                logger.warning("No 'video_context' found in response")
+                return None
+
+            concise_query = video_context.get("concise_query")
+            if concise_query is None:
+                logger.warning("No 'concise_query' found in video_context")
+                return None
+
+            logger.info(f"Concise query extracted successfully: {concise_query}")
+            logger.info(f"=== analyze_video_url DEBUG END ===")
+            return concise_query
+
+    except Exception as e:
+        logger.error(f"Error in analyze_video_url: {type(e).__name__}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
 async def handle_video_message(to: str, media_id: str, msg_id: str):
     """
     Download video from WhatsApp, host locally, then feed URL or extracted info into process_message.
@@ -469,13 +512,11 @@ async def handle_video_message(to: str, media_id: str, msg_id: str):
             logger.info("Hosted video URL: %s", full_url)
             
             # Optionally, if you have a video analysis API, call it here
-            # context = await analyze_video_url(full_url)  # If available
-            
-            # For now, just pass the hosted video URL as the message content
-            await process_message(to, f"[Video] {full_url}", msg_id, "video")
-        else:
-            logger.error("Failed to host video media")
-            await process_message(to, "[video processing failed]", msg_id, "video")
+            video_context_str = await analyze_video_url(full_url)
+            if video_context_str:
+                await process_message(to, video_context_str, msg_id, "video")
+            else:
+                await process_message(to, f"[Video hosted at {full_url}]", msg_id, "video")
 
     except Exception as e:
         logger.error(f"Error in handle_video_message: {e}")
