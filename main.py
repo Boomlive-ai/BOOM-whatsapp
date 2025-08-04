@@ -455,6 +455,32 @@ async def handle_image_message(to: str, media_id: str, msg_id: str):
         logger.error(f"Full traceback: {traceback.format_exc()}")
         # Still try to send some response
         await process_message(to, "[image processing failed]", msg_id, "image")
+        
+        
+async def handle_video_message(to: str, media_id: str, msg_id: str):
+    """
+    Download video from WhatsApp, host locally, then feed URL or extracted info into process_message.
+    """
+    try:
+        # Download and host the video file
+        hosted_path = await download_and_host_media(media_id)
+        if hosted_path:
+            full_url = f"https://bo0c8okoc8g8044wowgggk44.vps.boomlive.in{hosted_path}"
+            logger.info("Hosted video URL: %s", full_url)
+            
+            # Optionally, if you have a video analysis API, call it here
+            # context = await analyze_video_url(full_url)  # If available
+            
+            # For now, just pass the hosted video URL as the message content
+            await process_message(to, f"[Video] {full_url}", msg_id, "video")
+        else:
+            logger.error("Failed to host video media")
+            await process_message(to, "[video processing failed]", msg_id, "video")
+
+    except Exception as e:
+        logger.error(f"Error in handle_video_message: {e}")
+        await process_message(to, "[video processing failed]", msg_id, "video")
+
 @app.get("/")
 async def root():
     return {"message": "Webhook running", "verify_token": VERIFY_TOKEN}
@@ -586,8 +612,11 @@ async def webhook_handler(req: WebhookRequest):
                     media_id = msg["image"]["id"]
                     asyncio.create_task(handle_image_message(sender, media_id, msg_id))
 
-    
-                elif mtype in ["audio", "video"]:
+                    # Add an elif block inside the message loop for video type messages
+                elif mtype == "video":
+                    media_id = msg["video"]["id"]
+                    asyncio.create_task(handle_video_message(sender, media_id, msg_id))
+                elif mtype in ["audio"]:
                     media = msg[mtype]
                     text = await fetch_and_extract_media_text(media.get("id"))
                     if text:
