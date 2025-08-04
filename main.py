@@ -522,6 +522,66 @@ async def handle_video_message(to: str, media_id: str, msg_id: str):
         logger.error(f"Error in handle_video_message: {e}")
         await process_message(to, "[video processing failed]", msg_id, "video")
 
+async def analyze_audio_url(audio_url: str) -> Optional[str]:
+    """
+    Call your boomlive analyze-audio-url endpoint and return the 'transcription' string.
+    """
+    try:
+        logger.info(f"=== analyze_audio_url DEBUG START ===")
+        logger.info(f"Audio URL: {audio_url}")
+
+        api = f"https://jscw8gocc0k4s00gkcskcokc.vps.boomlive.in/analyze-audio-url/?audio_url={audio_url}"
+        logger.info(f"API URL: {api}")
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(api, headers={"accept": "application/json"})
+
+            logger.info(f"Response received: status={resp.status_code}, length={len(resp.content)} bytes")
+            logger.debug(f"Response content (first 1000 chars): {resp.text[:1000]}")
+
+            if resp.status_code != 200:
+                logger.error(f"Error: Non-200 status code {resp.status_code}")
+                logger.error(f"Response text: {resp.text}")
+                return None
+
+            body = resp.json()
+            transcription = body.get("transcription")
+            if not transcription:
+                logger.warning("No 'transcription' found in response")
+                return None
+
+            logger.info(f"Transcription extracted successfully: {transcription}")
+            logger.info(f"=== analyze_audio_url DEBUG END ===")
+            return transcription
+
+    except Exception as e:
+        logger.error(f"Error in analyze_audio_url: {type(e).__name__}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+
+async def handle_audio_message(to: str, media_id: str, msg_id: str):
+    """
+    Download audio from WhatsApp, host locally, then feed URL or transcription into process_message.
+    """
+    try:
+        hosted_path = await download_and_host_media(media_id)
+        if hosted_path:
+            full_url = f"https://bo0c8okoc8g8044wowgggk44.vps.boomlive.in{hosted_path}"
+            logger.info("Hosted audio URL: %s", full_url)
+
+            transcription = await analyze_audio_url(full_url)
+            if transcription:
+                await process_message(to, transcription, msg_id, "audio")
+            else:
+                await process_message(to, f"[Audio hosted at {full_url}]", msg_id, "audio")
+
+    except Exception as e:
+        logger.error(f"Error in handle_audio_message: {e}")
+        await process_message(to, "[audio processing failed]", msg_id, "audio")
+
+
 @app.get("/")
 async def root():
     return {"message": "Webhook running", "verify_token": VERIFY_TOKEN}
@@ -670,25 +730,26 @@ async def webhook_handler(req: WebhookRequest):
 
                 elif mtype in ["audio"]:
                     media = msg[mtype]
-                    asyncio.create_task(send_whatsapp_message(sender, "Audio received. Please wait while we process it..."))
-                    text = await fetch_and_extract_media_text(media.get("id"))
-                    if text:
-                        # Pass message_id and actual media type
-                        asyncio.create_task(process_message(sender, text, msg_id, mtype))
-                    else:
-                        # Record failed media processing
-                        metrics_service.record_message_complete(
-                            user_id=sender,
-                            message_id=msg_id,
-                            message_type=mtype,
-                            message_text=f"[{mtype.upper()} - processing failed]",
-                            response_text="",
-                            start_time=time.time(),
-                            llm_response_time=0,
-                            whatsapp_send_time=0,
-                            success=False,
-                            error_type="MEDIA_PROCESSING_FAILED"
-                        )
+                    # asyncio.create_task(send_whatsapp_message(sender, "Audio received. Please wait while we process it..."))
+                    media_id = media.get("id")
+                    asyncio.create_task(handle_audio_message(sender, media_id, msg_id))
+                    # if text:
+                    #     # Pass message_id and actual media type
+                    #     asyncio.create_task(process_message(sender, text, msg_id, mtype))
+                    # else:
+                    #     # Record failed media processing
+                    #     metrics_service.record_message_complete(
+                    #         user_id=sender,
+                    #         message_id=msg_id,
+                    #         message_type=mtype,
+                    #         message_text=f"[{mtype.upper()} - processing failed]",
+                    #         response_text="",
+                    #         start_time=time.time(),
+                    #         llm_response_time=0,
+                    #         whatsapp_send_time=0,
+                    #         success=False,
+                    #         error_type="MEDIA_PROCESSING_FAILED"
+                    #     )
 
     return {"status": "success"}
 
