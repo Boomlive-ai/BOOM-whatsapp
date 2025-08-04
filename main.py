@@ -651,6 +651,8 @@ async def webhook_handler(req: WebhookRequest):
                     # Pass message_id and type to process_message
                     asyncio.create_task(process_message(sender, text, msg_id, "text"))
                 elif mtype == "image":
+                    # Notify user that processing has started
+                    asyncio.create_task(send_whatsapp_message(sender, "Image received. Please wait while we process it..."))
                     # schedule the full image workflow; handler returns immediately
                     media_id = msg["image"]["id"]
                     asyncio.create_task(handle_image_message(sender, media_id, msg_id))
@@ -661,12 +663,14 @@ async def webhook_handler(req: WebhookRequest):
                     media_id = msg["document"]["id"]
 
                     if mime_type.startswith("video/"):
+                        asyncio.create_task(send_whatsapp_message(sender, "Video received. Please wait while we process it..."))
                         asyncio.create_task(handle_video_message(sender, media_id, msg_id))
                     else:
                         logger.info(f"Received document message with mime_type {mime_type} - no handler.")
 
                 elif mtype in ["audio"]:
                     media = msg[mtype]
+                    asyncio.create_task(send_whatsapp_message(sender, "Audio received. Please wait while we process it..."))
                     text = await fetch_and_extract_media_text(media.get("id"))
                     if text:
                         # Pass message_id and actual media type
