@@ -728,7 +728,8 @@ async def webhook_handler(req: WebhookRequest):
                     else:
                         logger.info(f"Received document message with mime_type {mime_type} - no handler.")
                 elif mtype in ["video"]:
-                    media_id = media.get("id")
+                    media_id = msg["video"]["id"]
+                    asyncio.create_task(send_whatsapp_message(sender, "Video received. Please wait while we process it..."))
                     asyncio.create_task(handle_video_message(sender, media_id, msg_id))
 
                 elif mtype in ["audio"]:
