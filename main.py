@@ -602,6 +602,8 @@ async def webhook_handler(req: WebhookRequest):
                 print("****************************************************************")
                 print(f"Received message from {sender}: {msg_id} type={mtype}")
                 print("****************************************************************")
+                print(f"Unprocessed MSG: ", msg)
+                print("****************************************************************")
 
                 if mtype == "text":
                     text = msg["text"]["body"]
@@ -613,7 +615,7 @@ async def webhook_handler(req: WebhookRequest):
                     asyncio.create_task(handle_image_message(sender, media_id, msg_id))
 
                     # Add an elif block inside the message loop for video type messages
-                elif mtype == "video":
+                elif mtype == "document":
                     media_id = msg["video"]["id"]
                     asyncio.create_task(handle_video_message(sender, media_id, msg_id))
                 elif mtype in ["audio"]:
